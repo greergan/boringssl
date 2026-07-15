@@ -4,14 +4,33 @@ BUILD_DIR := $(SRC_DIR)/build
 DIST_DIR := dist
 PROCS := 4
 ARCH := amd64
-FORGEJO_URL := http://forgejo
-FORGEJO_USER := highway-publisher
-FORGEJO_TOKEN := eaaabfa4bb2726880f462ec70b0d00e284773363
-FORGEJO_OWNER := greergan
-MAINTAINER := Jeff Greer <geergan@gmail.com>
-GENERIC_URL := $(FORGEJO_URL)/api/packages/$(FORGEJO_OWNER)/generic/$(PACKAGE_NAME)
-.PHONY: all clean clone patch configure build package upload upload-deb upload-rpm
-all: upload
+GENERIC_URL := $(SLIM_GIT_URL)/api/packages/$(SLIM_GIT_REPO_OWNER)/generic/$(PACKAGE_NAME)
+.PHONY: all clean clone patch configure build package upload upload-deb upload-rpm check-env
+all: check-env upload
+check-env:
+	@missing=0; \
+	for var in SLIM_GIT_URL SLIM_GIT_REPO_OWNER SLIM_PUBLISHER_USER SLIM_PUBLISHER_TOKEN; do \
+		eval val=\$$$$var; \
+		if [ -z "$$val" ]; then missing=1; fi; \
+	done; \
+	if [ $$missing -eq 1 ]; then \
+		echo ""; \
+		echo "Error: required environment variables must be set before running make:"; \
+		echo ""; \
+		echo "  Shell:"; \
+		echo "    export SLIM_GIT_URL=<forgejo instance url>"; \
+		echo "    export SLIM_GIT_REPO_OWNER=<repository owner>"; \
+		echo "    export SLIM_PUBLISHER_USER=<publisher username>"; \
+		echo "    export SLIM_PUBLISHER_TOKEN=<publisher api token>"; \
+		echo ""; \
+		echo "  Dockerfile:"; \
+		echo "    ENV SLIM_GIT_URL=<forgejo instance url>"; \
+		echo "    ENV SLIM_GIT_REPO_OWNER=<repository owner>"; \
+		echo "    ENV SLIM_PUBLISHER_USER=<publisher username>"; \
+		echo "    ENV SLIM_PUBLISHER_TOKEN=<publisher api token>"; \
+		echo ""; \
+		exit 1; \
+	fi
 clone:
 	@echo "==> Cloning BoringSSL (shallow)..."
 	@if [ ! -d "$(SRC_DIR)" ]; then \
@@ -34,7 +53,7 @@ patch: clone
 		echo 'set(CPACK_PACKAGE_FILE_NAME "$${CPACK_PACKAGE_NAME}-$${CPACK_PACKAGE_VERSION}-$(ARCH)")' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'set(CPACK_DEB_COMPONENT_INSTALL OFF)' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'set(CPACK_RPM_COMPONENT_INSTALL OFF)' >> $(SRC_DIR)/CMakeLists.txt; \
-		echo 'set(CPACK_DEBIAN_PACKAGE_MAINTAINER "$(MAINTAINER)")' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo "set(CPACK_DEBIAN_PACKAGE_MAINTAINER \"$$(git config user.name) <$$(git config user.email)>\")" >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'set(CPACK_RPM_PACKAGE_LICENSE "OpenSSL/ISC")' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'include(CPack)' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo "Install and CPack config injected."; \
@@ -61,13 +80,13 @@ package: build
 upload-deb:
 	@echo "==> Uploading .deb to Generic Registry..."
 	@PKG_VER=$$(cd $(SRC_DIR) && git log -1 --format=%cd --date=format:%Y%m%d); \
-	curl --user "$(FORGEJO_USER):$(FORGEJO_TOKEN)" \
+	curl --user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
 		--upload-file $(DIST_DIR)/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).deb \
 		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).deb"
 upload-rpm:
 	@echo "==> Uploading .rpm to Generic Registry..."
 	@PKG_VER=$$(cd $(SRC_DIR) && git log -1 --format=%cd --date=format:%Y%m%d); \
-	curl --user "$(FORGEJO_USER):$(FORGEJO_TOKEN)" \
+	curl --user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
 		--upload-file $(DIST_DIR)/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).rpm \
 		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).rpm"
 upload: package upload-deb upload-rpm
