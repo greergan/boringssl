@@ -55,6 +55,23 @@ patch: clone
 		echo 'set(CPACK_RPM_COMPONENT_INSTALL OFF)' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo "set(CPACK_DEBIAN_PACKAGE_MAINTAINER \"$$(git config user.name) <$$(git config user.email)>\")" >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'set(CPACK_RPM_PACKAGE_LICENSE "OpenSSL/ISC")' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo "# --- pkg-config .pc generation ---" >> $(SRC_DIR)/CMakeLists.txt; \
+		echo 'set(BORINGSSL_PC_PREFIX "/usr")' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo 'set(BORINGSSL_PC_LIBDIR "$${BORINGSSL_PC_PREFIX}/lib/x86_64-linux-gnu")' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo 'set(BORINGSSL_PC_INCDIR "$${BORINGSSL_PC_PREFIX}/include")' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo 'file(WRITE "$${CMAKE_BINARY_DIR}/boringssl.pc"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "prefix=$${BORINGSSL_PC_PREFIX}\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "libdir=$${BORINGSSL_PC_LIBDIR}\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "includedir=$${BORINGSSL_PC_INCDIR}\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "Name: BoringSSL\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "Description: BoringSSL crypto and SSL libraries\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "Version: $${CPACK_PACKAGE_VERSION}\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "Libs: -L\$${libdir} -lssl -lcrypto\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    "Cflags: -I\$${includedir}\n"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo ')' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo 'install(FILES "$${CMAKE_BINARY_DIR}/boringssl.pc"' >> $(SRC_DIR)/CMakeLists.txt; \
+		echo '    DESTINATION lib/x86_64-linux-gnu/pkgconfig)' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo 'include(CPack)' >> $(SRC_DIR)/CMakeLists.txt; \
 		echo "Install and CPack config injected."; \
 	else \
@@ -76,21 +93,38 @@ package: build
 	@echo "==> Generating .deb and .rpm packages..."
 	@cd $(BUILD_DIR) && cpack
 	@mkdir -p $(DIST_DIR)
+	@rm -f $(DIST_DIR)/*.deb $(DIST_DIR)/*.rpm
 	@find $(BUILD_DIR) -maxdepth 1 \( -name "*.deb" -o -name "*.rpm" \) -exec cp {} $(DIST_DIR)/ \;
 upload-deb:
 	@echo "==> Uploading .deb to Generic Registry..."
 	@PKG_VER=$$(cd $(SRC_DIR) && git log -1 --format=%cd --date=format:%Y%m%d); \
-	curl --user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
+	HTTP_CODE=$$(curl -s -o /dev/null -w "%{http_code}" \
+		--user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
 		--upload-file $(DIST_DIR)/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).deb \
-		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).deb"
+		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).deb"); \
+	if [ "$$HTTP_CODE" = "409" ]; then \
+		echo "==> Package already exists in the registry. Bump the version or run 'make clean' first."; \
+		exit 1; \
+	elif [ "$$HTTP_CODE" != "201" ]; then \
+		echo "==> ERROR: .deb upload failed (HTTP $$HTTP_CODE)"; \
+		exit 1; \
+	fi
 upload-rpm:
 	@echo "==> Uploading .rpm to Generic Registry..."
 	@PKG_VER=$$(cd $(SRC_DIR) && git log -1 --format=%cd --date=format:%Y%m%d); \
-	curl --user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
+	HTTP_CODE=$$(curl -s -o /dev/null -w "%{http_code}" \
+		--user "$(SLIM_PUBLISHER_USER):$(SLIM_PUBLISHER_TOKEN)" \
 		--upload-file $(DIST_DIR)/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).rpm \
-		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).rpm"
+		"$(GENERIC_URL)/$$PKG_VER/$(PACKAGE_NAME)-$$PKG_VER-$(ARCH).rpm"); \
+	if [ "$$HTTP_CODE" = "409" ]; then \
+		echo "==> Package already exists in the registry. Bump the version or run 'make clean' first."; \
+		exit 1; \
+	elif [ "$$HTTP_CODE" != "201" ]; then \
+		echo "==> ERROR: .rpm upload failed (HTTP $$HTTP_CODE)"; \
+		exit 1; \
+	fi
 upload: package upload-deb upload-rpm
 	@echo "==> Upload complete."
 clean:
 	@echo "==> Cleaning up build environment..."
-	rm -rf $(SRC_DIR) $(DIST_DIR)
+	rm -rf $(SRC_DIR)
